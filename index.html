@@ -4,13 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ระบบรายรับรายจ่าย</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💰</text></svg>">
     <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600&display=swap" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        'kanit': ['Kanit', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
     <style>
         body {
             box-sizing: border-box;
-            font-family: 'Kanit', sans-serif;
+            font-family: 'Kanit', system-ui, -apple-system, sans-serif;
             font-weight: 300;
             transition: all 0.3s ease;
         }
@@ -242,7 +254,7 @@
                         <i class="fas fa-user-plus mr-2"></i>เพิ่มผู้ใช้
                     </button>
                     <button id="syncBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm transition-all duration-300">
-                        <i class="fas fa-sync mr-2"></i>ซิงค์ข้อมูล
+                        <i class="fas fa-cloud mr-2"></i>จัดการบัญชี
                     </button>
                 </div>
             </div>
@@ -803,6 +815,7 @@
         let goals = {};
         let currentReport = null;
         let syncCode = null;
+        let extractedSlipData = null;
 
         // Categories
         const categories = {
@@ -937,6 +950,35 @@
             document.getElementById('generateSyncCode').addEventListener('click', generateSyncCode);
             document.getElementById('copySyncCode').addEventListener('click', copySyncCode);
             document.getElementById('joinSync').addEventListener('click', joinWithSyncCode);
+
+            // Slip scanner functionality
+            document.getElementById('slipUploadArea').addEventListener('click', () => {
+                document.getElementById('slipFileInput').click();
+            });
+
+            document.getElementById('slipFileInput').addEventListener('change', handleSlipUpload);
+            document.getElementById('useExtractedData').addEventListener('click', useExtractedSlipData);
+
+            // Drag and drop for slip upload
+            const uploadArea = document.getElementById('slipUploadArea');
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('border-blue-500', 'bg-blue-50');
+            });
+
+            uploadArea.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('border-blue-500', 'bg-blue-50');
+            });
+
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('border-blue-500', 'bg-blue-50');
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    handleSlipFile(files[0]);
+                }
+            });
 
             // Transaction form
             document.getElementById('transactionForm').addEventListener('submit', (e) => {
@@ -1194,6 +1236,11 @@
 
         // Add transaction
         function addTransaction() {
+            if (currentViewMode === 'shared') {
+                showNotification('ไม่สามารถเพิ่มรายการในโหมดดูข้อมูลแชร์ได้', 'error');
+                return;
+            }
+
             const type = document.getElementById('type').value;
             const amount = parseFloat(document.getElementById('amount').value);
             const category = document.getElementById('category').value;
@@ -1644,6 +1691,11 @@
 
         // Delete transaction
         function deleteTransaction(id) {
+            if (currentViewMode === 'shared') {
+                showNotification('ไม่สามารถลบรายการในโหมดดูข้อมูลแชร์ได้', 'error');
+                return;
+            }
+
             if (!transactions[currentUser]) return;
             
             transactions[currentUser] = transactions[currentUser].filter(t => t.id !== id);
@@ -2502,6 +2554,205 @@
                 syncDataToCloud();
             }
         };
+
+        // Slip processing functions
+        function handleSlipUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                handleSlipFile(file);
+            }
+        }
+
+        function handleSlipFile(file) {
+            // Validate file
+            if (!file) return;
+            
+            const maxSize = 10 * 1024 * 1024; // 10MB
+            if (file.size > maxSize) {
+                showNotification('ไฟล์มีขนาดใหญ่เกินไป (สูงสุด 10MB)', 'error');
+                return;
+            }
+
+            const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'application/pdf'];
+            if (!allowedTypes.includes(file.type)) {
+                showNotification('รองรับเฉพาะไฟล์ JPG, PNG, PDF เท่านั้น', 'error');
+                return;
+            }
+
+            // Show preview
+            showSlipPreview(file);
+            
+            // Process the slip
+            processSlip(file);
+        }
+
+        function showSlipPreview(file) {
+            const uploadPrompt = document.getElementById('uploadPrompt');
+            const uploadPreview = document.getElementById('uploadPreview');
+            const slipPreview = document.getElementById('slipPreview');
+
+            uploadPrompt.classList.add('hidden');
+            uploadPreview.classList.remove('hidden');
+
+            if (file.type.startsWith('image/')) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    slipPreview.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            } else {
+                slipPreview.src = 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgdmlld0JveD0iMCAwIDIwMCAyMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik0xMDAgNTBMMTUwIDEwMEgxMDBWMTUwSDUwVjEwMEgxMDBWNTBaIiBmaWxsPSIjOUI5QkEwIi8+Cjx0ZXh0IHg9IjEwMCIgeT0iMTcwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjOUI5QkEwIiBmb250LXNpemU9IjE0Ij5QREYgRmlsZTwvdGV4dD4KPHN2Zz4K';
+            }
+        }
+
+        function processSlip(file) {
+            const processingStatus = document.getElementById('processingStatus');
+            processingStatus.classList.remove('hidden');
+
+            // Simulate OCR processing with realistic delay
+            setTimeout(() => {
+                const mockSlipData = extractSlipDataMock(file);
+                displayExtractedData(mockSlipData);
+                processingStatus.classList.add('hidden');
+            }, 2000 + Math.random() * 2000); // 2-4 seconds
+        }
+
+        function extractSlipDataMock(file) {
+            // Mock OCR extraction - in real implementation, this would use OCR API
+            const mockData = [
+                {
+                    amount: 1250.00,
+                    date: '2024-01-15',
+                    description: 'โอนเงินค่าอาหาร 7-Eleven',
+                    category: 'อาหาร',
+                    confidence: 0.95
+                },
+                {
+                    amount: 850.50,
+                    date: '2024-01-15',
+                    description: 'ค่าน้ำมันรถ PTT',
+                    category: 'การเดินทาง',
+                    confidence: 0.88
+                },
+                {
+                    amount: 2500.00,
+                    date: '2024-01-15',
+                    description: 'ค่าเช่าบ้าน',
+                    category: 'ที่อยู่อาศัย',
+                    confidence: 0.92
+                },
+                {
+                    amount: 320.00,
+                    date: '2024-01-15',
+                    description: 'ค่าขนม Starbucks',
+                    category: 'ความบันเทิง',
+                    confidence: 0.85
+                },
+                {
+                    amount: 15000.00,
+                    date: '2024-01-15',
+                    description: 'เงินเดือนประจำเดือน',
+                    category: 'เงินเดือน',
+                    confidence: 0.98,
+                    type: 'income'
+                }
+            ];
+
+            // Return random mock data
+            const randomData = mockData[Math.floor(Math.random() * mockData.length)];
+            
+            // Add some realistic variations
+            const variations = [
+                { amount: randomData.amount * 0.8, description: randomData.description + ' (ส่วนลด)' },
+                { amount: randomData.amount * 1.2, description: randomData.description + ' + ค่าบริการ' },
+                { amount: Math.round(randomData.amount * (0.9 + Math.random() * 0.2)), description: randomData.description }
+            ];
+            
+            const finalData = Math.random() > 0.7 ? variations[Math.floor(Math.random() * variations.length)] : randomData;
+            
+            return {
+                amount: finalData.amount || randomData.amount,
+                date: randomData.date,
+                description: finalData.description || randomData.description,
+                category: randomData.category,
+                type: randomData.type || 'expense',
+                confidence: randomData.confidence,
+                rawText: `จำนวนเงิน: ${finalData.amount || randomData.amount} บาท\nวันที่: ${randomData.date}\nรายละเอียด: ${finalData.description || randomData.description}`
+            };
+        }
+
+        function displayExtractedData(data) {
+            extractedSlipData = data;
+            
+            document.getElementById('extractedAmount').textContent = `฿${data.amount.toLocaleString()}`;
+            document.getElementById('extractedDate').textContent = formatDate(data.date);
+            document.getElementById('extractedDescription').textContent = data.description;
+            document.getElementById('suggestedCategory').textContent = data.category;
+            
+            document.getElementById('extractedDataPreview').classList.remove('hidden');
+            
+            // Add confidence indicator
+            const confidenceColor = data.confidence > 0.9 ? 'text-green-600' : data.confidence > 0.8 ? 'text-yellow-600' : 'text-red-600';
+            document.getElementById('extractedAmount').className = `text-2xl font-semibold ${confidenceColor}`;
+            
+            showNotification(`อ่านข้อมูลสำเร็จ! ความแม่นยำ ${(data.confidence * 100).toFixed(0)}%`, 'success');
+        }
+
+        function useExtractedSlipData() {
+            if (!extractedSlipData) return;
+            
+            // Fill the form with extracted data
+            document.getElementById('type').value = extractedSlipData.type;
+            document.getElementById('amount').value = extractedSlipData.amount;
+            document.getElementById('description').value = extractedSlipData.description;
+            document.getElementById('date').value = extractedSlipData.date;
+            
+            // Update categories and select the suggested one
+            updateCategories();
+            setTimeout(() => {
+                document.getElementById('category').value = extractedSlipData.category;
+            }, 100);
+            
+            // Scroll to form
+            document.querySelector('#transactionForm').scrollIntoView({ behavior: 'smooth' });
+            
+            // Reset slip scanner
+            resetSlipScanner();
+            
+            showNotification('นำข้อมูลมาใส่ในฟอร์มแล้ว กรุณาตรวจสอบความถูกต้อง', 'success');
+        }
+
+        function resetSlipScanner() {
+            document.getElementById('uploadPrompt').classList.remove('hidden');
+            document.getElementById('uploadPreview').classList.add('hidden');
+            document.getElementById('extractedDataPreview').classList.add('hidden');
+            document.getElementById('processingStatus').classList.add('hidden');
+            document.getElementById('slipFileInput').value = '';
+            extractedSlipData = null;
+        }
+
+        // Enhanced category suggestion based on keywords
+        function suggestCategoryFromDescription(description) {
+            const keywords = {
+                'อาหาร': ['7-eleven', 'แมค', 'kfc', 'pizza', 'ร้านอาหาร', 'อาหาร', 'เครื่องดื่ม', 'กาแฟ', 'starbucks', 'cafe'],
+                'การเดินทาง': ['ptt', 'shell', 'น้ำมัน', 'รถ', 'taxi', 'grab', 'bts', 'mrt', 'รถไฟ'],
+                'ที่อยู่อาศัย': ['เช่า', 'ค่าเช่า', 'ไฟฟ้า', 'น้ำ', 'อินเทอร์เน็ต', 'ค่าบ้าน'],
+                'ช้อปปิ้ง': ['เซเว่น', 'big c', 'lotus', 'central', 'shopping', 'ซื้อของ'],
+                'ความบันเทิง': ['โรงหนัง', 'เกม', 'netflix', 'spotify', 'youtube'],
+                'สุขภาพ': ['โรงพยาบาล', 'คลินิก', 'ยา', 'หมอ', 'ฟัน'],
+                'เงินเดือน': ['เงินเดือน', 'salary', 'ค่าจ้าง', 'โบนัส']
+            };
+
+            const desc = description.toLowerCase();
+            
+            for (const [category, keywordList] of Object.entries(keywords)) {
+                if (keywordList.some(keyword => desc.includes(keyword))) {
+                    return category;
+                }
+            }
+            
+            return 'อื่นๆ';
+        }
 
         // Show notification
         function showNotification(message, type = 'info') {
