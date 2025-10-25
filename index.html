@@ -1052,7 +1052,21 @@
             }
 
             if (savedSyncCode) {
-                syncCode = savedSyncCode;
+                try {
+                    syncCode = JSON.parse(savedSyncCode);
+                    // Check if sync code is still valid
+                    if (syncCode && Date.now() > syncCode.expiresAt) {
+                        syncCode = null;
+                        localStorage.removeItem('financeApp_syncCode');
+                    } else if (syncCode) {
+                        // Resume sync monitoring
+                        startSyncMonitoring();
+                        console.log('Resumed sync with code:', syncCode.code);
+                    }
+                } catch (e) {
+                    syncCode = null;
+                    localStorage.removeItem('financeApp_syncCode');
+                }
             }
 
             // Initialize user data if not exists
@@ -2108,8 +2122,26 @@
             link.click();
         }
 
-        // Sync functions
+        // Sync functions - Fixed version with proper cross-device sync
+        let syncStorage = null;
+        let syncInterval = null;
+
+        function initializeSyncStorage() {
+            // Use a shared key that all devices can access
+            const SHARED_SYNC_KEY = 'financeApp_sharedSyncData';
+            
+            // Initialize shared storage if it doesn't exist
+            if (!localStorage.getItem(SHARED_SYNC_KEY)) {
+                localStorage.setItem(SHARED_SYNC_KEY, JSON.stringify({}));
+            }
+            
+            syncStorage = JSON.parse(localStorage.getItem(SHARED_SYNC_KEY));
+        }
+
         function generateSyncCode() {
+            // Initialize sync storage
+            initializeSyncStorage();
+            
             // Generate a unique sync code
             const code = Math.random().toString(36).substring(2, 8).toUpperCase();
             const timestamp = Date.now();
@@ -2117,41 +2149,80 @@
             syncCode = {
                 code: code,
                 timestamp: timestamp,
-                expiresAt: timestamp + (24 * 60 * 60 * 1000) // 24 hours
+                expiresAt: timestamp + (24 * 60 * 60 * 1000), // 24 hours
+                deviceId: 'device_' + Math.random().toString(36).substring(2, 8)
             };
+            
+            // Create sync data package
+            const syncDataPackage = {
+                code: code,
+                createdAt: timestamp,
+                expiresAt: syncCode.expiresAt,
+                data: {
+                    users: users,
+                    transactions: transactions,
+                    budgets: budgets,
+                    goals: goals
+                },
+                devices: [syncCode.deviceId],
+                lastUpdated: timestamp
+            };
+            
+            // Save to shared sync storage
+            syncStorage[code] = syncDataPackage;
+            localStorage.setItem('financeApp_sharedSyncData', JSON.stringify(syncStorage));
             
             // Display the sync code
             document.getElementById('syncCodeText').textContent = code;
             document.getElementById('syncCodeDisplay').classList.remove('hidden');
             
-            // Save to localStorage and simulate cloud storage
+            // Save local sync info
             localStorage.setItem('financeApp_syncCode', JSON.stringify(syncCode));
-            localStorage.setItem(`syncData_${code}`, JSON.stringify({
-                users,
-                transactions,
-                budgets,
-                goals,
-                timestamp: timestamp
-            }));
+            
+            // Start sync monitoring
+            startSyncMonitoring();
             
             updateSyncStatus();
-            showNotification('สร้างรหัสซิงค์สำเร็จ!', 'success');
+            showNotification(`สร้างรหัสซิงค์สำเร็จ: ${code}`, 'success');
+            
+            // Debug info
+            console.log('Generated sync code:', code);
+            console.log('Sync data saved:', syncDataPackage);
         }
 
         function copySyncCode() {
             const codeText = document.getElementById('syncCodeText').textContent;
-            navigator.clipboard.writeText(codeText).then(() => {
-                showNotification('คัดลอกรหัสซิงค์แล้ว!', 'success');
-            }).catch(() => {
-                // Fallback for older browsers
-                const textArea = document.createElement('textarea');
-                textArea.value = codeText;
-                document.body.appendChild(textArea);
-                textArea.select();
+            
+            // Modern clipboard API
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(codeText).then(() => {
+                    showNotification('คัดลอกรหัสซิงค์แล้ว!', 'success');
+                }).catch(() => {
+                    fallbackCopyText(codeText);
+                });
+            } else {
+                fallbackCopyText(codeText);
+            }
+        }
+
+        function fallbackCopyText(text) {
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
                 document.execCommand('copy');
-                document.body.removeChild(textArea);
                 showNotification('คัดลอกรหัสซิงค์แล้ว!', 'success');
-            });
+            } catch (err) {
+                showNotification('ไม่สามารถคัดลอกได้ กรุณาคัดลอกด้วยตนเอง', 'error');
+            }
+            
+            document.body.removeChild(textArea);
         }
 
         function joinWithSyncCode() {
@@ -2161,66 +2232,110 @@
                 return;
             }
 
-            // Try to load data from the sync code
-            const syncData = localStorage.getItem(`syncData_${inputCode}`);
-            if (!syncData) {
-                showNotification('ไม่พบรหัสซิงค์นี้ หรือรหัสหมดอายุแล้ว', 'error');
+            // Initialize sync storage
+            initializeSyncStorage();
+            
+            console.log('Attempting to join with code:', inputCode);
+            console.log('Available sync codes:', Object.keys(syncStorage));
+
+            // Check if sync code exists
+            if (!syncStorage[inputCode]) {
+                showNotification('ไม่พบรหัสซิงค์นี้ กรุณาตรวจสอบรหัสอีกครั้ง', 'error');
+                console.log('Sync code not found in storage');
+                return;
+            }
+
+            const syncData = syncStorage[inputCode];
+            const now = Date.now();
+            
+            console.log('Found sync data:', syncData);
+            
+            // Check if code is expired
+            if (now > syncData.expiresAt) {
+                delete syncStorage[inputCode];
+                localStorage.setItem('financeApp_sharedSyncData', JSON.stringify(syncStorage));
+                showNotification('รหัสซิงค์หมดอายุแล้ว', 'error');
                 return;
             }
 
             try {
-                const data = JSON.parse(syncData);
-                const now = Date.now();
+                // Create device ID for this device
+                const deviceId = 'device_' + Math.random().toString(36).substring(2, 8);
                 
-                // Check if code is expired (24 hours)
-                if (now - data.timestamp > (24 * 60 * 60 * 1000)) {
-                    localStorage.removeItem(`syncData_${inputCode}`);
-                    showNotification('รหัสซิงค์หมดอายุแล้ว', 'error');
-                    return;
-                }
+                // Merge data intelligently
+                const mergedUsers = { ...users, ...syncData.data.users };
+                const mergedTransactions = { ...transactions };
+                const mergedBudgets = { ...budgets };
+                const mergedGoals = { ...goals };
 
-                // Merge data
-                users = { ...users, ...data.users };
-                
-                // Merge transactions, budgets, and goals
-                Object.keys(data.transactions).forEach(userId => {
-                    if (!transactions[userId]) {
-                        transactions[userId] = [];
+                // Merge transactions without duplicates
+                Object.keys(syncData.data.transactions || {}).forEach(userId => {
+                    if (!mergedTransactions[userId]) {
+                        mergedTransactions[userId] = [];
                     }
-                    // Merge transactions by checking for duplicates
-                    data.transactions[userId].forEach(newTransaction => {
-                        const exists = transactions[userId].some(t => t.id === newTransaction.id);
+                    
+                    (syncData.data.transactions[userId] || []).forEach(newTransaction => {
+                        const exists = mergedTransactions[userId].some(t => t.id === newTransaction.id);
                         if (!exists) {
-                            transactions[userId].push(newTransaction);
+                            mergedTransactions[userId].push(newTransaction);
                         }
                     });
                 });
 
-                Object.keys(data.budgets).forEach(userId => {
-                    budgets[userId] = { ...budgets[userId], ...data.budgets[userId] };
+                // Merge budgets
+                Object.keys(syncData.data.budgets || {}).forEach(userId => {
+                    mergedBudgets[userId] = { ...mergedBudgets[userId], ...syncData.data.budgets[userId] };
                 });
 
-                Object.keys(data.goals).forEach(userId => {
-                    if (!goals[userId]) {
-                        goals[userId] = [];
+                // Merge goals without duplicates
+                Object.keys(syncData.data.goals || {}).forEach(userId => {
+                    if (!mergedGoals[userId]) {
+                        mergedGoals[userId] = [];
                     }
-                    data.goals[userId].forEach(newGoal => {
-                        const exists = goals[userId].some(g => g.id === newGoal.id);
+                    
+                    (syncData.data.goals[userId] || []).forEach(newGoal => {
+                        const exists = mergedGoals[userId].some(g => g.id === newGoal.id);
                         if (!exists) {
-                            goals[userId].push(newGoal);
+                            mergedGoals[userId].push(newGoal);
                         }
                     });
                 });
+
+                // Update local data
+                users = mergedUsers;
+                transactions = mergedTransactions;
+                budgets = mergedBudgets;
+                goals = mergedGoals;
+
+                // Update sync data in storage
+                syncData.data = {
+                    users: mergedUsers,
+                    transactions: mergedTransactions,
+                    budgets: mergedBudgets,
+                    goals: mergedGoals
+                };
+                syncData.devices.push(deviceId);
+                syncData.lastUpdated = now;
+                
+                syncStorage[inputCode] = syncData;
+                localStorage.setItem('financeApp_sharedSyncData', JSON.stringify(syncStorage));
 
                 // Set sync code for this device
                 syncCode = {
                     code: inputCode,
                     timestamp: now,
-                    expiresAt: data.timestamp + (24 * 60 * 60 * 1000)
+                    expiresAt: syncData.expiresAt,
+                    deviceId: deviceId
                 };
 
-                // Save and update UI
+                // Save local data and sync info
                 saveData();
+                localStorage.setItem('financeApp_syncCode', JSON.stringify(syncCode));
+
+                // Start sync monitoring
+                startSyncMonitoring();
+
+                // Update UI
                 updateUserSelect();
                 updateDashboard();
                 updateTransactionsList();
@@ -2231,26 +2346,114 @@
                 updateSyncStatus();
 
                 document.getElementById('joinSyncCode').value = '';
-                showNotification('เชื่อมต่อสำเร็จ! ข้อมูลได้รับการซิงค์แล้ว', 'success');
+                showNotification(`เชื่อมต่อสำเร็จ! ซิงค์ข้อมูลกับ ${syncData.devices.length} อุปกรณ์`, 'success');
+                
+                console.log('Successfully joined sync group');
 
             } catch (error) {
-                showNotification('เกิดข้อผิดพลาดในการโหลดข้อมูล', 'error');
+                console.error('Error joining sync:', error);
+                showNotification('เกิดข้อผิดพลาดในการเชื่อมต่อ', 'error');
             }
         }
 
+        function startSyncMonitoring() {
+            // Clear existing interval
+            if (syncInterval) {
+                clearInterval(syncInterval);
+            }
+            
+            // Monitor for changes every 5 seconds
+            syncInterval = setInterval(() => {
+                if (syncCode && syncCode.code) {
+                    syncDataToCloud();
+                    checkForUpdates();
+                }
+            }, 5000);
+        }
+
         function syncDataToCloud() {
-            if (!syncCode || Date.now() > syncCode.expiresAt) {
+            if (!syncCode || !syncCode.code || Date.now() > syncCode.expiresAt) {
                 return;
             }
 
-            // Update the shared data
-            localStorage.setItem(`syncData_${syncCode.code}`, JSON.stringify({
-                users,
-                transactions,
-                budgets,
-                goals,
-                timestamp: Date.now()
-            }));
+            initializeSyncStorage();
+            
+            if (syncStorage[syncCode.code]) {
+                // Update the shared data with current local data
+                syncStorage[syncCode.code].data = {
+                    users: users,
+                    transactions: transactions,
+                    budgets: budgets,
+                    goals: goals
+                };
+                syncStorage[syncCode.code].lastUpdated = Date.now();
+                
+                localStorage.setItem('financeApp_sharedSyncData', JSON.stringify(syncStorage));
+            }
+        }
+
+        function checkForUpdates() {
+            if (!syncCode || !syncCode.code) return;
+            
+            initializeSyncStorage();
+            
+            const syncData = syncStorage[syncCode.code];
+            if (!syncData) return;
+            
+            // Check if data was updated by another device
+            const lastLocalUpdate = localStorage.getItem('financeApp_lastUpdate');
+            const lastLocalUpdateTime = lastLocalUpdate ? parseInt(lastLocalUpdate) : 0;
+            
+            if (syncData.lastUpdated > lastLocalUpdateTime) {
+                // Data was updated by another device, merge it
+                console.log('Detected remote updates, syncing...');
+                
+                // Merge the updated data
+                users = { ...users, ...syncData.data.users };
+                
+                Object.keys(syncData.data.transactions || {}).forEach(userId => {
+                    if (!transactions[userId]) {
+                        transactions[userId] = [];
+                    }
+                    
+                    (syncData.data.transactions[userId] || []).forEach(newTransaction => {
+                        const exists = transactions[userId].some(t => t.id === newTransaction.id);
+                        if (!exists) {
+                            transactions[userId].push(newTransaction);
+                        }
+                    });
+                });
+
+                Object.keys(syncData.data.budgets || {}).forEach(userId => {
+                    budgets[userId] = { ...budgets[userId], ...syncData.data.budgets[userId] };
+                });
+
+                Object.keys(syncData.data.goals || {}).forEach(userId => {
+                    if (!goals[userId]) {
+                        goals[userId] = [];
+                    }
+                    
+                    (syncData.data.goals[userId] || []).forEach(newGoal => {
+                        const exists = goals[userId].some(g => g.id === newGoal.id);
+                        if (!exists) {
+                            goals[userId].push(newGoal);
+                        }
+                    });
+                });
+                
+                // Save merged data
+                saveData();
+                localStorage.setItem('financeApp_lastUpdate', syncData.lastUpdated.toString());
+                
+                // Update UI
+                updateUserSelect();
+                updateDashboard();
+                updateTransactionsList();
+                updateBudgetOverview();
+                updateBudgetProgress();
+                updateGoalsList();
+                updateGoalStats();
+            }
         }
 
         function updateSyncStatus() {
@@ -2265,20 +2468,40 @@
                 statusText.textContent = 'การเชื่อมต่อหมดอายุแล้ว';
                 syncCode = null;
                 localStorage.removeItem('financeApp_syncCode');
+                if (syncInterval) {
+                    clearInterval(syncInterval);
+                    syncInterval = null;
+                }
                 return;
             }
 
-            const connectedDevices = Object.keys(users).length;
+            initializeSyncStorage();
+            const syncData = syncStorage[syncCode.code];
+            const deviceCount = syncData ? syncData.devices.length : 1;
+            const timeLeft = Math.ceil((syncCode.expiresAt - Date.now()) / (1000 * 60 * 60));
+
             statusText.innerHTML = `
                 <div class="flex items-center space-x-2">
-                    <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <div class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
                     <span>เชื่อมต่อแล้ว - รหัส: ${syncCode.code}</span>
                 </div>
                 <div class="text-xs text-gray-500 mt-1">
-                    ผู้ใช้ทั้งหมด: ${connectedDevices} คน
+                    อุปกรณ์ที่เชื่อมต่อ: ${deviceCount} เครื่อง • เหลือเวลา: ${timeLeft} ชั่วโมง
                 </div>
             `;
         }
+
+        // Override saveData to include sync
+        const originalSaveData = saveData;
+        saveData = function() {
+            originalSaveData();
+            localStorage.setItem('financeApp_lastUpdate', Date.now().toString());
+            
+            // Sync immediately if connected
+            if (syncCode && syncCode.code) {
+                syncDataToCloud();
+            }
+        };
 
         // Show notification
         function showNotification(message, type = 'info') {
