@@ -236,12 +236,13 @@
                         <i class="fas fa-moon theme-icon moon"></i>
                     </button>
                     <select id="userSelect" class="bg-gray-100 text-gray-900 rounded-xl px-4 py-2 text-sm border-0 focus:ring-2 focus:ring-gray-300 backdrop-blur">
-                        <option value="user1">ผู้ใช้ 1</option>
-                        <option value="user2">ผู้ใช้ 2</option>
-                        <option value="user3">ผู้ใช้ 3</option>
+                        <!-- Users will be populated dynamically -->
                     </select>
                     <button id="addUserBtn" class="bg-gray-100 hover:bg-gray-200 text-gray-900 px-4 py-2 rounded-xl text-sm transition-all duration-300">
                         <i class="fas fa-user-plus mr-2"></i>เพิ่มผู้ใช้
+                    </button>
+                    <button id="syncBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-sm transition-all duration-300">
+                        <i class="fas fa-sync mr-2"></i>ซิงค์ข้อมูล
                     </button>
                 </div>
             </div>
@@ -729,14 +730,79 @@
         </div>
     </div>
 
+    <!-- Sync Modal -->
+    <div id="syncModal" class="fixed inset-0 bg-black/50 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
+        <div class="glass-effect rounded-2xl p-8 w-full max-w-lg animate-slide-up">
+            <h3 class="text-xl font-medium mb-6 flex items-center">
+                <i class="fas fa-sync mr-3 text-blue-600"></i>
+                ซิงค์ข้อมูลระหว่างอุปกรณ์
+            </h3>
+            
+            <div class="space-y-6">
+                <!-- Generate Sync Code -->
+                <div class="p-6 bg-blue-50 rounded-xl">
+                    <h4 class="font-medium mb-3 flex items-center">
+                        <i class="fas fa-qrcode mr-2 text-blue-600"></i>
+                        สร้างรหัสซิงค์
+                    </h4>
+                    <p class="text-sm text-gray-600 mb-4">สร้างรหัสเพื่อให้อุปกรณ์อื่นเข้าถึงข้อมูลของคุณ</p>
+                    <button id="generateSyncCode" class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-xl font-medium transition-all">
+                        <i class="fas fa-plus mr-2"></i>สร้างรหัสซิงค์
+                    </button>
+                    <div id="syncCodeDisplay" class="hidden mt-4 p-4 bg-white rounded-lg border-2 border-dashed border-blue-300">
+                        <p class="text-sm text-gray-600 mb-2">รหัสซิงค์ของคุณ:</p>
+                        <div class="flex items-center space-x-2">
+                            <code id="syncCodeText" class="flex-1 bg-gray-100 px-3 py-2 rounded text-lg font-mono"></code>
+                            <button id="copySyncCode" class="bg-gray-200 hover:bg-gray-300 px-3 py-2 rounded transition-colors">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">รหัสนี้จะหมดอายุใน 24 ชั่วโมง</p>
+                    </div>
+                </div>
+
+                <!-- Join with Sync Code -->
+                <div class="p-6 bg-green-50 rounded-xl">
+                    <h4 class="font-medium mb-3 flex items-center">
+                        <i class="fas fa-mobile-alt mr-2 text-green-600"></i>
+                        เข้าร่วมด้วยรหัสซิงค์
+                    </h4>
+                    <p class="text-sm text-gray-600 mb-4">ใส่รหัสซิงค์จากอุปกรณ์อื่นเพื่อเข้าถึงข้อมูลร่วมกัน</p>
+                    <div class="flex space-x-2">
+                        <input type="text" id="joinSyncCode" class="flex-1 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-transparent" placeholder="ใส่รหัสซิงค์">
+                        <button id="joinSync" class="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl font-medium transition-all">
+                            <i class="fas fa-sign-in-alt mr-2"></i>เข้าร่วม
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Current Sync Status -->
+                <div id="syncStatus" class="p-4 bg-gray-50 rounded-xl">
+                    <h4 class="font-medium mb-2 flex items-center">
+                        <i class="fas fa-info-circle mr-2 text-gray-600"></i>
+                        สถานะการซิงค์
+                    </h4>
+                    <p id="syncStatusText" class="text-sm text-gray-600">ยังไม่ได้เชื่อมต่อกับอุปกรณ์อื่น</p>
+                </div>
+            </div>
+
+            <div class="flex justify-end mt-6">
+                <button id="closeSyncModal" class="bg-gray-100 hover:bg-gray-200 text-gray-800 py-3 px-6 rounded-xl font-medium transition-colors">
+                    ปิด
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Global variables
         let currentUser = 'user1';
         let transactions = {};
-        let users = ['user1', 'user2', 'user3'];
+        let users = {};
         let budgets = {};
         let goals = {};
         let currentReport = null;
+        let syncCode = null;
 
         // Categories
         const categories = {
@@ -765,6 +831,7 @@
         // Initialize app
         document.addEventListener('DOMContentLoaded', function() {
             loadData();
+            initializeUsers();
             initializeTheme();
             setupEventListeners();
             updateCategories();
@@ -775,6 +842,7 @@
             updateBudgetProgress();
             updateGoalsList();
             updateGoalStats();
+            updateSyncStatus();
         });
 
         // Theme management
@@ -848,15 +916,27 @@
             document.getElementById('confirmAddUser').addEventListener('click', () => {
                 const userName = document.getElementById('newUserName').value.trim();
                 if (userName) {
-                    const userId = 'user' + (users.length + 1);
-                    users.push(userId);
-                    updateUserSelect();
+                    addNewUser(userName);
                     document.getElementById('newUserName').value = '';
                     document.getElementById('addUserModal').classList.add('hidden');
                     document.getElementById('addUserModal').classList.remove('flex');
-                    saveData();
                 }
             });
+
+            // Sync functionality
+            document.getElementById('syncBtn').addEventListener('click', () => {
+                document.getElementById('syncModal').classList.remove('hidden');
+                document.getElementById('syncModal').classList.add('flex');
+            });
+
+            document.getElementById('closeSyncModal').addEventListener('click', () => {
+                document.getElementById('syncModal').classList.add('hidden');
+                document.getElementById('syncModal').classList.remove('flex');
+            });
+
+            document.getElementById('generateSyncCode').addEventListener('click', generateSyncCode);
+            document.getElementById('copySyncCode').addEventListener('click', copySyncCode);
+            document.getElementById('joinSync').addEventListener('click', joinWithSyncCode);
 
             // Transaction form
             document.getElementById('transactionForm').addEventListener('submit', (e) => {
@@ -953,6 +1033,7 @@
             const savedUsers = localStorage.getItem('financeApp_users');
             const savedBudgets = localStorage.getItem('financeApp_budgets');
             const savedGoals = localStorage.getItem('financeApp_goals');
+            const savedSyncCode = localStorage.getItem('financeApp_syncCode');
             
             if (savedTransactions) {
                 transactions = JSON.parse(savedTransactions);
@@ -960,7 +1041,6 @@
             
             if (savedUsers) {
                 users = JSON.parse(savedUsers);
-                updateUserSelect();
             }
 
             if (savedBudgets) {
@@ -971,16 +1051,20 @@
                 goals = JSON.parse(savedGoals);
             }
 
+            if (savedSyncCode) {
+                syncCode = savedSyncCode;
+            }
+
             // Initialize user data if not exists
-            users.forEach(user => {
-                if (!transactions[user]) {
-                    transactions[user] = [];
+            Object.keys(users).forEach(userId => {
+                if (!transactions[userId]) {
+                    transactions[userId] = [];
                 }
-                if (!budgets[user]) {
-                    budgets[user] = {};
+                if (!budgets[userId]) {
+                    budgets[userId] = {};
                 }
-                if (!goals[user]) {
-                    goals[user] = [];
+                if (!goals[userId]) {
+                    goals[userId] = [];
                 }
             });
         }
@@ -991,16 +1075,57 @@
             localStorage.setItem('financeApp_users', JSON.stringify(users));
             localStorage.setItem('financeApp_budgets', JSON.stringify(budgets));
             localStorage.setItem('financeApp_goals', JSON.stringify(goals));
+            if (syncCode) {
+                localStorage.setItem('financeApp_syncCode', syncCode);
+            }
+            
+            // Sync with other devices if connected
+            if (syncCode) {
+                syncDataToCloud();
+            }
+        }
+
+        // Initialize users
+        function initializeUsers() {
+            if (Object.keys(users).length === 0) {
+                // Create default users
+                users = {
+                    'user1': { name: 'ผู้ใช้หลัก', createdAt: new Date().toISOString() }
+                };
+                currentUser = 'user1';
+            }
+            updateUserSelect();
+        }
+
+        // Add new user
+        function addNewUser(userName) {
+            const userId = 'user' + Date.now();
+            users[userId] = {
+                name: userName,
+                createdAt: new Date().toISOString()
+            };
+            
+            // Initialize data for new user
+            transactions[userId] = [];
+            budgets[userId] = {};
+            goals[userId] = [];
+            
+            updateUserSelect();
+            saveData();
+            showNotification(`เพิ่มผู้ใช้ "${userName}" สำเร็จ!`, 'success');
         }
 
         // Update user select dropdown
         function updateUserSelect() {
             const select = document.getElementById('userSelect');
             select.innerHTML = '';
-            users.forEach((user, index) => {
+            Object.entries(users).forEach(([userId, userData]) => {
                 const option = document.createElement('option');
-                option.value = user;
-                option.textContent = `ผู้ใช้ ${index + 1}`;
+                option.value = userId;
+                option.textContent = userData.name;
+                if (userId === currentUser) {
+                    option.selected = true;
+                }
                 select.appendChild(option);
             });
         }
@@ -1981,6 +2106,178 @@
             link.href = URL.createObjectURL(blob);
             link.download = `รายงาน_${currentReport.type}_${new Date().toISOString().split('T')[0]}.csv`;
             link.click();
+        }
+
+        // Sync functions
+        function generateSyncCode() {
+            // Generate a unique sync code
+            const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+            const timestamp = Date.now();
+            
+            syncCode = {
+                code: code,
+                timestamp: timestamp,
+                expiresAt: timestamp + (24 * 60 * 60 * 1000) // 24 hours
+            };
+            
+            // Display the sync code
+            document.getElementById('syncCodeText').textContent = code;
+            document.getElementById('syncCodeDisplay').classList.remove('hidden');
+            
+            // Save to localStorage and simulate cloud storage
+            localStorage.setItem('financeApp_syncCode', JSON.stringify(syncCode));
+            localStorage.setItem(`syncData_${code}`, JSON.stringify({
+                users,
+                transactions,
+                budgets,
+                goals,
+                timestamp: timestamp
+            }));
+            
+            updateSyncStatus();
+            showNotification('สร้างรหัสซิงค์สำเร็จ!', 'success');
+        }
+
+        function copySyncCode() {
+            const codeText = document.getElementById('syncCodeText').textContent;
+            navigator.clipboard.writeText(codeText).then(() => {
+                showNotification('คัดลอกรหัสซิงค์แล้ว!', 'success');
+            }).catch(() => {
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = codeText;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                showNotification('คัดลอกรหัสซิงค์แล้ว!', 'success');
+            });
+        }
+
+        function joinWithSyncCode() {
+            const inputCode = document.getElementById('joinSyncCode').value.trim().toUpperCase();
+            if (!inputCode) {
+                showNotification('กรุณาใส่รหัสซิงค์', 'error');
+                return;
+            }
+
+            // Try to load data from the sync code
+            const syncData = localStorage.getItem(`syncData_${inputCode}`);
+            if (!syncData) {
+                showNotification('ไม่พบรหัสซิงค์นี้ หรือรหัสหมดอายุแล้ว', 'error');
+                return;
+            }
+
+            try {
+                const data = JSON.parse(syncData);
+                const now = Date.now();
+                
+                // Check if code is expired (24 hours)
+                if (now - data.timestamp > (24 * 60 * 60 * 1000)) {
+                    localStorage.removeItem(`syncData_${inputCode}`);
+                    showNotification('รหัสซิงค์หมดอายุแล้ว', 'error');
+                    return;
+                }
+
+                // Merge data
+                users = { ...users, ...data.users };
+                
+                // Merge transactions, budgets, and goals
+                Object.keys(data.transactions).forEach(userId => {
+                    if (!transactions[userId]) {
+                        transactions[userId] = [];
+                    }
+                    // Merge transactions by checking for duplicates
+                    data.transactions[userId].forEach(newTransaction => {
+                        const exists = transactions[userId].some(t => t.id === newTransaction.id);
+                        if (!exists) {
+                            transactions[userId].push(newTransaction);
+                        }
+                    });
+                });
+
+                Object.keys(data.budgets).forEach(userId => {
+                    budgets[userId] = { ...budgets[userId], ...data.budgets[userId] };
+                });
+
+                Object.keys(data.goals).forEach(userId => {
+                    if (!goals[userId]) {
+                        goals[userId] = [];
+                    }
+                    data.goals[userId].forEach(newGoal => {
+                        const exists = goals[userId].some(g => g.id === newGoal.id);
+                        if (!exists) {
+                            goals[userId].push(newGoal);
+                        }
+                    });
+                });
+
+                // Set sync code for this device
+                syncCode = {
+                    code: inputCode,
+                    timestamp: now,
+                    expiresAt: data.timestamp + (24 * 60 * 60 * 1000)
+                };
+
+                // Save and update UI
+                saveData();
+                updateUserSelect();
+                updateDashboard();
+                updateTransactionsList();
+                updateBudgetOverview();
+                updateBudgetProgress();
+                updateGoalsList();
+                updateGoalStats();
+                updateSyncStatus();
+
+                document.getElementById('joinSyncCode').value = '';
+                showNotification('เชื่อมต่อสำเร็จ! ข้อมูลได้รับการซิงค์แล้ว', 'success');
+
+            } catch (error) {
+                showNotification('เกิดข้อผิดพลาดในการโหลดข้อมูล', 'error');
+            }
+        }
+
+        function syncDataToCloud() {
+            if (!syncCode || Date.now() > syncCode.expiresAt) {
+                return;
+            }
+
+            // Update the shared data
+            localStorage.setItem(`syncData_${syncCode.code}`, JSON.stringify({
+                users,
+                transactions,
+                budgets,
+                goals,
+                timestamp: Date.now()
+            }));
+        }
+
+        function updateSyncStatus() {
+            const statusText = document.getElementById('syncStatusText');
+            
+            if (!syncCode) {
+                statusText.textContent = 'ยังไม่ได้เชื่อมต่อกับอุปกรณ์อื่น';
+                return;
+            }
+
+            if (Date.now() > syncCode.expiresAt) {
+                statusText.textContent = 'การเชื่อมต่อหมดอายุแล้ว';
+                syncCode = null;
+                localStorage.removeItem('financeApp_syncCode');
+                return;
+            }
+
+            const connectedDevices = Object.keys(users).length;
+            statusText.innerHTML = `
+                <div class="flex items-center space-x-2">
+                    <div class="w-2 h-2 bg-green-500 rounded-full"></div>
+                    <span>เชื่อมต่อแล้ว - รหัส: ${syncCode.code}</span>
+                </div>
+                <div class="text-xs text-gray-500 mt-1">
+                    ผู้ใช้ทั้งหมด: ${connectedDevices} คน
+                </div>
+            `;
         }
 
         // Show notification
